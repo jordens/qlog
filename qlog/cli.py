@@ -1,3 +1,6 @@
+from __future__ import (absolute_import, print_function,
+                unicode_literals, division)
+
 from qlog import *
 
 
@@ -11,7 +14,6 @@ def main():
     import numpy as np
 
     from sqlalchemy import create_engine, orm
-    #from .color_log import color_log_setup
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--database", type=str,
@@ -51,12 +53,12 @@ def main():
                     collection.values.iteritems()))
         elif action.endswith("?"):
             n = action.rstrip("?").strip()
-            print("time, timestamp, %s" % n)
+            print("time, %s" % n)
             var = collection.variables[n]
             for t, v in var.iterhistory(args.begin, args.end):
                 ts = t.isoformat()
                 tt = time.mktime(t.timetuple())+t.microsecond*1e-6
-                print("%s, %f, %g" % (ts, tt, v))
+                print("%s, %g" % (ts, v))
         elif "," in action:
             fig, ax = plt.subplots()
             for n in action.split(","):

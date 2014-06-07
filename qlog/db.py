@@ -1,3 +1,6 @@
+from __future__ import (absolute_import, print_function,
+                unicode_literals, division)
+
 import datetime
 
 from sqlalchemy import (Column, Integer, String, DateTime, Float,
@@ -76,6 +79,9 @@ class Variable(Base):
         v = Value(value, time)
         self.values.append(v)  # pylint: disable-msg=E1101
         return v
+
+    def last(self):
+        return self.values.order_by(desc(Value.time))
 
     def history(self, begin=None, end=None):
         v = self.values
