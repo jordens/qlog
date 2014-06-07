@@ -16,10 +16,10 @@ def simple_line_plot(base, collection, name, limit, interval):
     y = np.log10(df.value) if var["info"].get("logarithmic") else df.value
 
     plotting.output_server("QLog")
-    plot = plotting.line(df.time, df.value, color="#0000FF", x_axis_type="datetime", 
+    plot = plotting.line(df.time, df.value, color="#0000FF", x_axis_type="datetime",
         tools="pan,wheel_zoom,box_zoom,resize,save,hover",
-        title="%s/%s" % (collection, name))
-        #legend="%s/%s" % (collection, name))
+        title="", #%s/%s" % (collection, name))
+        legend="%s/%s" % (collection, name))
     #plotting.xaxis()[0].axis_label = ""
     unit = var["info"].get("unit", "")
     if var["info"].get("logarithmic"):

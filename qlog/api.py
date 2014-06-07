@@ -4,7 +4,7 @@ from __future__ import (absolute_import, print_function,
 import time
 import logging
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, current_app
 from flask.ext import restful
 
 from sqlalchemy import create_engine
@@ -16,30 +16,12 @@ from . import db
 logger = logging.getLogger("qlog")
 
 
-DATABASE = "sqlite:///qlog.sqlite"
-engine = create_engine(DATABASE, convert_unicode=True)
-db_session = scoped_session(sessionmaker(autocommit=False,
-                                         autoflush=False,
-                                         bind=engine))
-db.Base.query = db_session.query_property()
-db.Base.metadata.create_all(engine)
-
-app = Flask(__name__)
-api = restful.Api(app)
-
-
-@app.teardown_appcontext
 def shutdown_session(exception=None):
-    db_session.remove()
-
-
-@app.route("/")
-def index():
-    return "Try /api/a/collections"
+    current_app.db_session.remove()
 
 
 def get_var(var, coll=None):
-    v = db_session.query(db.Variable)
+    v = current_app.db_session.query(db.Variable)
     if coll is None:
         v = v.get(var)
     else:
@@ -56,16 +38,14 @@ def timestamp(t):
 
 class Collections(restful.Resource):
     def get(self):
-        cols = db_session.query(db.Collection)
+        cols = current_app.db_session.query(db.Collection)
         return dict((c.name, {"id": c.id, "origin": c.origin,
             "description": c.description}) for c in cols)
-api.add_resource(Collections,
-       "/api/1/collections")
 
 
 class Collection(restful.Resource):
     def get(self, coll):
-        c = db_session.query(db.Collection)
+        c = current_app.db_session.query(db.Collection)
         if type(coll) is type(1):
             c = c.get(coll)
         else:
@@ -75,9 +55,6 @@ class Collection(restful.Resource):
             "variables": [{"name": v.name, "id": v.id} for v in
                 c.variables_list]}
         return jsonify(d)
-api.add_resource(Collection,
-        "/api/1/collection/<string:coll>",
-        "/api/1/collection/<int:coll>")
 
 
 class Variable(restful.Resource):
@@ -102,9 +79,6 @@ class Variable(restful.Resource):
                     "delete_older": v.info.delete_older,
                     }
         return jsonify(d)
-api.add_resource(Variable,
-     "/api/1/variable/<string:coll>/<string:var>",
-     "/api/1/variable/<int:var>")
 
 
 class Data(restful.Resource):
@@ -120,12 +94,36 @@ class Data(restful.Resource):
     def put(self, var, coll=None):
         v = get_var(var, coll)
         v.update(value=float(request.form["value"]))
-        db_session.commit()
-api.add_resource(Data,
-        "/api/1/data/<int:var>",
-        "/api/1/data/<string:coll>/<string:var>",
-        "/api/1/data/<int:var>/<int:offset>/<int:limit>",
-        "/api/1/data/<string:coll>/<string:var>/<int:offset>/<int:limit>")
+        current_app.db_session.commit()
+
+
+def create_app(database):
+    app = Flask(__name__)
+    api = restful.Api(app)
+
+    engine = create_engine(database, convert_unicode=True)
+    db_session = scoped_session(sessionmaker(autocommit=False,
+        autoflush=False, bind=engine))
+    db.Base.query = db_session.query_property()
+    db.Base.metadata.create_all(engine)
+    app.db_session = db_session
+
+    api.add_resource(Collections,
+            "/api/1/collections")
+    api.add_resource(Collection,
+            "/api/1/collection/<string:coll>",
+            "/api/1/collection/<int:coll>")
+    api.add_resource(Variable,
+             "/api/1/variable/<string:coll>/<string:var>",
+             "/api/1/variable/<int:var>")
+    api.add_resource(Data,
+            "/api/1/data/<int:var>",
+            "/api/1/data/<string:coll>/<string:var>",
+            "/api/1/data/<int:var>/<int:offset>/<int:limit>",
+            "/api/1/data/<string:coll>/<string:var>/<int:offset>/<int:limit>")
+
+    app.teardown_appcontext(shutdown_session)
+    return app
 
 
 def main():
@@ -135,12 +133,14 @@ def main():
     parser.add_argument("-q", "--quiet", action="count", default=0)
     parser.add_argument("-l", "--listen", default="0.0.0.0")
     parser.add_argument("-p", "--port", default="6881", type=int)
+    parser.add_argument("-d", "--database", default="sqlite:///qlog.sqlite")
     args = parser.parse_args()
 
     level = [logging.CRITICAL, logging.ERROR, logging.WARN, logging.INFO,
             logging.DEBUG][args.verbose - args.quiet + 3]
     logging.basicConfig(level=level)
 
+    app = create_app(args.database)
     app.run(host=args.listen, port=args.port,
             debug=args.verbose > args.quiet)
 
