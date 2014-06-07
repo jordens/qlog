@@ -14,8 +14,8 @@ from sqlalchemy.orm import relationship, backref
 
 class Tablename(object):
     @declared_attr
-    def __tablename__(cls):  # pylint: disable-msg=E0213
-        return cls.__name__.lower()  # pylint: disable-msg=E1101
+    def __tablename__(cls):
+        return cls.__name__.lower()
 
 Base = declarative_base(cls=Tablename)
 
@@ -69,16 +69,20 @@ class Variable(Base):
     def info(self):
         return self.infos.order_by(desc(VariableInfo.time)).first()
 
-    @info.setter  # pylint: disable-msg=E1101
-    def info(self, info):  # pylint: disable-msg=E0102
-        self.infos.append(info)  # pylint: disable-msg=E1101
+    @info.setter
+    def info(self, info):
+        self.infos.append(info)
 
     def update(self, value=None, time=None):
         if time is None:
             time = datetime.datetime.now()
         v = Value(value, time)
-        self.values.append(v)  # pylint: disable-msg=E1101
+        self.values.append(v)
         return v
+
+    def update_series(self, values, times):
+        for vi, ti in zip(values, times):
+            self.update(vi, ti)
 
     def last(self):
         return self.values.order_by(desc(Value.time))
@@ -86,9 +90,9 @@ class Variable(Base):
     def history(self, begin=None, end=None):
         v = self.values
         if begin:
-            v = v.filter(Value.time >= begin)  # pylint: disable-msg=E1101
+            v = v.filter(Value.time >= begin)
         if end:
-            v = v.filter(Value.time < end)  # pylint: disable-msg=E1101,E1103
+            v = v.filter(Value.time < end)
         return v.order_by(asc(Value.time))
 
     def iterhistory(self, begin=None, end=None):
@@ -99,9 +103,9 @@ class Variable(Base):
     def current(self):
         return self.values.order_by(desc(Value.time)).first()
 
-    @current.setter  # pylint: disable-msg=E1101
-    def current(self, value):  # pylint: disable-msg=E0102
-        self.values.append(value)  # pylint: disable-msg=E1101
+    @current.setter
+    def current(self, value):
+        self.values.append(value)
 
     # no association_proxy since we add a new value
     @hybrid_property
@@ -109,8 +113,8 @@ class Variable(Base):
         # raises AttributeError if unset
         return self.current.value
 
-    @value.setter  # pylint: disable-msg=E1101
-    def value(self, value):  # pylint: disable-msg=E0102
+    @value.setter
+    def value(self, value):
         self.update(value)
 
     def __float__(self):
@@ -140,29 +144,71 @@ class CollectionTimeRange(Base):
     position = Column(Integer)
 
 
+class CollectionCollection(Base):
+    parent_id = Column(Integer, ForeignKey("collection.id"),
+            primary_key=True)
+    child_id = Column(Integer, ForeignKey("collection.id"),
+            primary_key=True)
+    position = Column(Integer)
+
+
 class Collection(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False, unique=True)
     origin = Column(String(255))
     description = Column(String(255))
     variables_list = relationship(Variable,
-            # pylint: disable-msg=E1101
             secondary=CollectionVariable.__table__,
             lazy="dynamic", order_by=desc(CollectionVariable.position))
     variables = relationship(Variable,
-            # pylint: disable-msg=E1101
             secondary=CollectionVariable.__table__,
             collection_class=attribute_mapped_collection("name"),
             backref=backref("collections", lazy="dynamic"))
     values = association_proxy("variables", "value",
             creator=Variable)
+    values_list = association_proxy("variable_list", "value",
+            creator=Variable)
     timeranges = relationship(TimeRange,
-            # pylint: disable-msg=E1101
             secondary=CollectionTimeRange.__table__,
             lazy="dynamic", order_by=desc(CollectionTimeRange.position))
+    children = relationship("Collection", 
+            secondary=CollectionCollection.__table__,
+            #foreign_keys=CollectionCollection.parent_id,
+            primaryjoin=id==CollectionCollection.parent_id,
+            secondaryjoin=id==CollectionCollection.child_id,
+            backref=backref("parents", lazy="dynamic"),
+            lazy="dynamic", order_by=desc(CollectionCollection.position))
 
     def add(self, variable):
         self.variables[variable.name] = variable
+
+    def get(self, name):
+        try:
+            v = self.variables[name]
+        except KeyError:
+            v = Variable(name=name)
+            self.add(v)
+        return v
+
+    def variables_all(self):
+        return list(self.variables_list) + sum((c.variables_all() for c in
+                self.children), [])
+
+    def update_from_recarray(self, data, time_column="time"):
+        time = data.field(time_column).astype("datetime64[us]")
+        time = time.astype(float)/1e6
+        time = map(datetime.datetime.fromtimestamp, time)
+        for name in data.dtype.names:
+            if name == time_column:
+                continue
+            v = self.get(name)
+            v.update_series(data.field(name), time)
+
+    @classmethod
+    def from_recarray(cls, data, time_column="time", **kwargs):
+        obj = cls(**kwargs)
+        obj.update_from_recarray(data, time_column=time_column)
+        return obj
 
     def load(self, data):
         pass

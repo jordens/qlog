@@ -1,12 +1,11 @@
 import unittest
 
 import datetime
+
+import numpy as np
 from sqlalchemy import create_engine, orm
 from qlog.db import (Variable, Value, VariableInfo,
     Collection, Base)
-
-
-# pylint: disable-msg=R0904
 
 
 class DbCase(unittest.TestCase):
@@ -16,7 +15,7 @@ class DbCase(unittest.TestCase):
         Session = orm.sessionmaker(bind=self.engine)
         self.session = Session()
 
-    def test_variable_variable(self):
+    def test_variable(self):
         va = Variable("va")
         va.update()
         va.value = 2
@@ -72,6 +71,25 @@ class DbCase(unittest.TestCase):
         self.assertNotIn("1", c.variables)
         self.assertNotIn("1", c.variables_list)
 
+    def test_collection_load(self):
+        c1, c2, c3, c4 = [Collection(name="test%i" % i) for i in range(4)]
+        self.session.add(c1)
+        c1.children.append(c2)
+        c1.children.append(c3)
+        c2.children.append(c4)
+        self.assertEqual(set(c1.children), set((c2, c3)))
+        self.assertEqual(set(c2.children), set((c4,)))
+        self.assertEqual(set(c3.children), set())
+        self.assertEqual(set(c4.children), set())
+
+    def test_load_reacarray(self):
+        now = datetime.datetime.utcnow()
+        d = [[now, 1, 2], ["2100-01-01T00:01", 3, 4]]
+        d = np.rec.fromrecords(d, dtype=[("time", "datetime64[us]"),
+                ("va", "f8"), ("vb", "f8")])
+        c = Collection.from_recarray(d, name="col")
+        self.session.add(c)
+        self.assertEqual(c.values, {"va": 3, "vb": 4})
 
 if __name__ == "__main__":
     unittest.main()
