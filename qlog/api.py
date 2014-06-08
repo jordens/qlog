@@ -24,7 +24,7 @@ class Collection(restful.Resource):
     def get(self, coll=None):
         cols = current_app.db_session.query(db.Collection)
         if coll:
-            cols = cols.filter(Collection.name == coll)
+            cols = cols.filter(db.Collection.name == coll)
         d = {}
         for c in cols:
             d[c.name] = {"origin": c.origin,
@@ -70,7 +70,7 @@ class Data(restful.Resource):
         l = v.last().offset(offset).limit(limit)
         q = [[q.time, q.value] for q in l]
         d = {"columns": ["time", "value"],
-                "index": range(l.count()),
+                "index": list(range(l.count())),
                 "data": q}
         return jsonify(d)
 
