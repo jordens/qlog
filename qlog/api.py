@@ -20,10 +20,6 @@ def shutdown_session(exception=None):
     current_app.db_session.remove()
 
 
-def timestamp(t):
-    return time.mktime(t.timetuple()) + t.microsecond*1e-6
-
-
 class Collection(restful.Resource):
     def get(self, coll=None):
         cols = current_app.db_session.query(db.Collection)
@@ -49,7 +45,7 @@ class Variable(restful.Resource):
         for v in vars:
             i = v.info
             d[v.name] = {"info": {
-                    "time": timestamp(i.time),
+                    "time": i.time,
                     "logarithmic": i.logarithmic,
                     "unit": i.unit,
                     "description": i.description,
@@ -61,7 +57,7 @@ class Variable(restful.Resource):
                     }}
             if v.current is not None:
                 d[v.name]["current"] = {
-                        "time": timestamp(v.current.time),
+                        "time": v.current.time,
                         "value": v.current.value,
                         }
         return jsonify(d)
@@ -72,7 +68,7 @@ class Data(restful.Resource):
         v = current_app.db_session.query(db.Variable).filter(
             db.Variable.name == var).one()
         l = v.last().offset(offset).limit(limit)
-        q = [[timestamp(q.time), q.value] for q in l]
+        q = [[q.time, q.value] for q in l]
         d = {"columns": ["time", "value"],
                 "index": range(l.count()),
                 "data": q}

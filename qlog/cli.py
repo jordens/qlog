@@ -55,10 +55,12 @@ def main():
             n = action.rstrip("?").strip()
             print("time, %s" % n)
             var = collection.get(n)
+            if args.begin:
+                args.begin = time.mktime(args.begin.timetuple())*1e6 + t.microsecond
+            if args.end:
+                args.end = time.mktime(args.end.timetuple())*1e6 + t.microsecond
             for t, v in var.iterhistory(args.begin, args.end):
-                ts = t.isoformat()
-                tt = time.mktime(t.timetuple())+t.microsecond*1e-6
-                print("%s, %g" % (ts, v))
+                print("%s, %g" % (t, v))
         elif "," in action:
             fig, ax = plt.subplots()
             for n in action.split(","):
