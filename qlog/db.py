@@ -31,7 +31,8 @@ class Value(AbstractConcreteBase, Base):
             }
     @declared_attr
     def variable_id(cls):
-        return Column(Integer, ForeignKey("variable.id"), primary_key=True)
+        return Column(Integer, ForeignKey("variable.id"),
+                primary_key=True, ondelete="cascade")
     #time = Column(DateTime(6), primary_key=True)
     time = Column(BigInteger(), primary_key=True)
 
@@ -61,7 +62,8 @@ class BinaryValue(Value):
 
 
 class VariableInfo(Base):
-    variable_id = Column(Integer, ForeignKey("variable.id"), primary_key=True)
+    variable_id = Column(Integer, ForeignKey("variable.id"),
+            primary_key=True, ondelete="cascade")
     time = Column(DateTime(), primary_key=True)
     type = Column(String(255), nullable=False)
     logarithmic = Column(Boolean)
@@ -78,7 +80,8 @@ class Variable(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False, unique=True)
     infos = relationship(VariableInfo, lazy="dynamic",
-            cascade="all, delete-orphan", backref="variable")
+            cascade="all, delete-orphan", backref="variable",
+            passive_deletes=True)
 
     float_values = relationship(FloatValue, lazy="dynamic",
             cascade="all, delete-orphan", passive_deletes=True)
@@ -189,9 +192,9 @@ class Variable(Base):
 
 class CollectionVariable(Base):
     collection_id = Column(Integer, ForeignKey("collection.id"),
-            primary_key=True)
+            primary_key=True, ondelete="cascade")
     variable_id = Column(Integer, ForeignKey("variable.id"),
-            primary_key=True)
+            primary_key=True, ondelete="cascade")
     position = Column(Integer)
 
 
@@ -204,17 +207,17 @@ class TimeRange(Base):
 
 class CollectionTimeRange(Base):
     collection_id = Column(Integer, ForeignKey("collection.id"),
-            primary_key=True)
+            primary_key=True, ondelete="cascade")
     timerange_id = Column(Integer, ForeignKey("timerange.id"),
-            primary_key=True)
+            primary_key=True, ondelete="cascade")
     position = Column(Integer)
 
 
 class CollectionCollection(Base):
     left_id = Column(Integer, ForeignKey("collection.id"),
-            primary_key=True)
+            primary_key=True, ondelete="cascade")
     right_id = Column(Integer, ForeignKey("collection.id"),
-            primary_key=True)
+            primary_key=True, ondelete="cascade")
     position = Column(Integer)
 
 
