@@ -19,6 +19,6 @@ while True:
         tel.write(b"GDAT? 1\r\n")
         v = tel.read_until(b"\r", 10).strip()
         requests.put(args["<url>"], data={"value": float(v)})
-    except Exception, e:
-        print e
+    except Exception as e:
+        print(e)
     time.sleep(float(args["<interval>"]))

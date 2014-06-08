@@ -5,4 +5,5 @@ bokeh
 docopt
 pandas
 requests
-matplotlib
+PyMySQL
+gevent

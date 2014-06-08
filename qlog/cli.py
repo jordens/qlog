@@ -10,7 +10,6 @@ def main():
     import time
 
     import dateutil.parser
-    import matplotlib.pyplot as plt
     import numpy as np
 
     from sqlalchemy import create_engine, orm
@@ -62,6 +61,7 @@ def main():
             for t, v in var.iterhistory(args.begin, args.end):
                 print("%s, %g" % (t, v))
         elif "," in action:
+            import matplotlib.pyplot as plt
             fig, ax = plt.subplots()
             for n in action.split(","):
                 n = n.strip()
