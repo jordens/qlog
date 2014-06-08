@@ -20,70 +20,57 @@ def shutdown_session(exception=None):
     current_app.db_session.remove()
 
 
-def get_var(var, coll=None):
-    v = current_app.db_session.query(db.Variable)
-    if coll is None:
-        v = v.get(var)
-    else:
-        v = v.join(db.Variable.collections
-            ).filter(db.Collection.name == coll
-            ).filter(db.Variable.name == var
-            ).one()
-    return v
-
-
 def timestamp(t):
     return time.mktime(t.timetuple()) + t.microsecond*1e-6
 
 
-class Collections(restful.Resource):
-    def get(self):
-        cols = current_app.db_session.query(db.Collection)
-        return dict((c.name, {"id": c.id, "origin": c.origin,
-            "description": c.description}) for c in cols)
-
-
 class Collection(restful.Resource):
-    def get(self, coll):
-        c = current_app.db_session.query(db.Collection)
-        if type(coll) is type(1):
-            c = c.get(coll)
-        else:
-            c = c.filter(db.Collection.name == coll).one()
-        d = {"name": c.name, "id": c.id, "origin": c.origin,
-            "description": c.description,
-            "variables": [{"name": v.name, "id": v.id} for v in
-                c.variables_list]}
+    def get(self, coll=None):
+        cols = current_app.db_session.query(db.Collection)
+        if coll:
+            cols = cols.filter(Collection.name == coll)
+        d = {}
+        for c in cols:
+            d[c.name] = {"origin": c.origin,
+                    "description": c.description,
+                    "primary_variables": [v.name for v in
+                        c.primary_variables],
+                    "right_collections": [r.name for r in
+                        c.right_collections]}
         return jsonify(d)
 
 
 class Variable(restful.Resource):
-    def get(self, var, coll=None):
-        v = get_var(var, coll)
-        d = {"name": v.name, "id": v.id, "current": {}, "info": {}}
-        if v.current is not None:
-            d["current"] = {
-                    "time": timestamp(v.current.time),
-                    "value": v.current.value,
-                    }
-        if v.info is not None:
-            d["info"] = {
-                    "time": timestamp(v.info.time),
-                    "logarithmic": v.info.logarithmic,
-                    "unit": v.info.unit,
-                    "description": v.info.description,
-                    "time_precision": v.info.time_precision,
-                    "value_precision": v.info.value_precision,
-                    "max_gap": v.info.max_gap,
-                    "aggregate_older": v.info.aggregate_older,
-                    "delete_older": v.info.delete_older,
-                    }
+    def get(self, var=None):
+        vars = current_app.db_session.query(db.Variable)
+        if var:
+            vars = vars.filter(db.Variable.name == var)
+        d = {}
+        for v in vars:
+            i = v.info
+            d[v.name] = {"info": {
+                    "time": timestamp(i.time),
+                    "logarithmic": i.logarithmic,
+                    "unit": i.unit,
+                    "description": i.description,
+                    "time_precision": i.time_precision,
+                    "value_precision": i.value_precision,
+                    "max_gap": i.max_gap,
+                    "aggregate_older": i.aggregate_older,
+                    "delete_older": i.delete_older,
+                    }}
+            if v.current is not None:
+                d[v.name]["current"] = {
+                        "time": timestamp(v.current.time),
+                        "value": v.current.value,
+                        }
         return jsonify(d)
 
 
 class Data(restful.Resource):
-    def get(self, var, coll=None, offset=0, limit=1):
-        v = get_var(var, coll)
+    def get(self, var, offset=0, limit=1):
+        v = current_app.db_session.query(db.Variable).filter(
+            db.Variable.name == var).one()
         l = v.last().offset(offset).limit(limit)
         q = [[timestamp(q.time), q.value] for q in l]
         d = {"columns": ["time", "value"],
@@ -91,8 +78,9 @@ class Data(restful.Resource):
                 "data": q}
         return jsonify(d)
 
-    def put(self, var, coll=None):
-        v = get_var(var, coll)
+    def put(self, var):
+        v = current_app.db_session.query(db.Variable).filter(
+            db.Variable.name == var).one()
         v.update(value=float(request.form["value"]))
         current_app.db_session.commit()
 
@@ -108,19 +96,15 @@ def create_app(database):
     db.Base.metadata.create_all(engine)
     app.db_session = db_session
 
-    api.add_resource(Collections,
-            "/api/1/collections")
     api.add_resource(Collection,
-            "/api/1/collection/<string:coll>",
-            "/api/1/collection/<int:coll>")
+            "/api/1/collection",
+            "/api/1/collection/<string:coll>")
     api.add_resource(Variable,
-             "/api/1/variable/<string:coll>/<string:var>",
-             "/api/1/variable/<int:var>")
+             "/api/1/variable",
+             "/api/1/variable/<string:var>")
     api.add_resource(Data,
-            "/api/1/data/<int:var>",
-            "/api/1/data/<string:coll>/<string:var>",
-            "/api/1/data/<int:var>/<int:offset>/<int:limit>",
-            "/api/1/data/<string:coll>/<string:var>/<int:offset>/<int:limit>")
+            "/api/1/data/<string:var>",
+            "/api/1/data/<string:var>/<int:offset>/<int:limit>")
 
     app.teardown_appcontext(shutdown_session)
     return app

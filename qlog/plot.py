@@ -6,38 +6,53 @@ import numpy as np
 import pandas as pd
 import requests
 from bokeh import plotting
+from bokeh.objects import ColumnDataSource
 
 
-def simple_line_plot(base, collection, name, limit, interval):
-    var = requests.get("%s/variable/%s/%s" % (base, collection, name)).json()
+class QlogPlot:
+    def __init__(self, base, name, limit, ds):
+        self.name = name
+        self.var = requests.get("%s/variable/%s" % (base, name)).json()[name]
+        self.url = "%s/data/%s/0/%i" % (base, name, limit)
+        ds.add([], "%s value" % name)
+        ds.add([], "%s time" % name)
+        self.update(ds)
+        self.plot(ds)
 
-    url = "%s/data/%s/0/%i" % (base, var["id"], limit)
-    df = pd.read_json(url, "split")
-    y = np.log10(df.value) if var["info"].get("logarithmic") else df.value
+    def plot(self, ds):
+        unit = self.var["info"].get("unit", "")
+        if self.var["info"].get("logarithmic"):
+            unit = unit + " (log10)"
+        plotting.line("%s time" % self.name, "%s value" % self.name,
+                x_axis_type="datetime", source=ds,
+                legend="%s (%s)" % (self.name, unit), title="")
+        plotting.circle("%s time" % self.name, "%s value" % self.name,
+                source=ds, size=2.,
+                legend="%s (%s)" % (self.name, unit), title="")
 
+    def update(self, ds):
+        df = pd.read_json(self.url, "split")
+        y = df.value
+        if self.var["info"]["logarithmic"]:
+            y = np.log10(df.value)
+        ds.data["%s value" % self.name] = y
+        ds.data["%s time" % self.name] = df.time
+
+
+def simple_line_plot(base, names, limit, interval):
     plotting.output_server("QLog")
-    plot = plotting.line(df.time, df.value, color="#0000FF", x_axis_type="datetime",
-        tools="pan,wheel_zoom,box_zoom,resize,save,hover",
-        title="", #%s/%s" % (collection, name))
-        legend="%s/%s" % (collection, name))
-    #plotting.xaxis()[0].axis_label = ""
-    unit = var["info"].get("unit", "")
-    if var["info"].get("logarithmic"):
-        unit = unit + " (log10)"
-    plotting.yaxis()[0].axis_label = unit
-
+    plotting.hold()
+    plotting.figure()
+    ds = ColumnDataSource(data={})
+    plots = [QlogPlot(base, name, limit, ds) for name in names]
     plotting.show()
 
-    from bokeh.objects import Glyph
-    ds = [r for r in plot.renderers if isinstance(r, Glyph)][0].data_source
     while True:
-        df = pd.read_json(url, "split")
-        ds.data["x"] = df.time
-        y = np.log10(df.value) if var["info"].get("logarithmic") else df.value
-        ds.data["y"] = y
+        time.sleep(interval)
+        for plot in plots:
+            plot.update(ds)
         ds._dirty = True
         plotting.session().store_obj(ds)
-        time.sleep(interval)
 
 
 def main():
@@ -45,13 +60,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("-b", "--base",
             default="http://localhost:6881/api/1")
-    parser.add_argument("-c", "--collection", default="all")
-    parser.add_argument("-n", "--name", default="a")
     parser.add_argument("-l", "--limit", type=int, default=100)
     parser.add_argument("-i", "--interval", type=float, default=5)
+    parser.add_argument("names", nargs="+")
     args = parser.parse_args()
 
-    simple_line_plot(args.base, args.collection, args.name, args.limit,
+    simple_line_plot(args.base, args.names, args.limit,
             args.interval)
 
 

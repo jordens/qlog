@@ -47,14 +47,14 @@ def main():
     for action in args.actions:
         if "=" in action:
             k, v = action.split("=")
-            collection.values[k.strip()] = float(v)
+            collection.get(k.strip(), create=True).value = float(v)
         elif action == "?":
-            print(", ".join("%s = %g" % (v, k) for v, k in 
-                    collection.values.iteritems()))
+            print(", ".join("%s = %g" % (v.name, v.value) for v in 
+                    collection.variables()))
         elif action.endswith("?"):
             n = action.rstrip("?").strip()
             print("time, %s" % n)
-            var = collection.variables[n]
+            var = collection.get(n)
             for t, v in var.iterhistory(args.begin, args.end):
                 ts = t.isoformat()
                 tt = time.mktime(t.timetuple())+t.microsecond*1e-6
@@ -65,18 +65,18 @@ def main():
                 n = n.strip()
                 if not n:
                     continue
-                var = collection.variables[n]
+                var = collection.get(n)
                 t, v = np.array(list(var.iterhistory(args.begin,
                     args.end))).T
                 ax.plot(t, v, label=n)
-                if var.info and var.info.logarithmic:
+                if var.info.logarithmic:
                     ax.set_yscale("log")
             fig.autofmt_xdate()
             ax.legend()
             fig.savefig("%s_%s.pdf" % (args.collection, action))
         else:
             k = action.strip()
-            print("%g" % collection.values[k])
+            print("%g" % collection.get(k).value)
     session.commit()
 
 if __name__ == "__main__":

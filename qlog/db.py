@@ -8,8 +8,9 @@ from sqlalchemy import (Column, Integer, String, DateTime, Float,
 from sqlalchemy.ext.declarative import declarative_base, declared_attr
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.ext.hybrid import hybrid_property
-from sqlalchemy.orm.collections import attribute_mapped_collection
-from sqlalchemy.orm import relationship, backref
+from sqlalchemy.orm.collections import column_mapped_collection
+from sqlalchemy.ext.orderinglist import ordering_list
+from sqlalchemy.orm import relationship, backref, object_session
 
 
 class Tablename(object):
@@ -22,7 +23,7 @@ Base = declarative_base(cls=Tablename)
 
 class Value(Base):
     variable_id = Column(Integer, ForeignKey("variable.id"), primary_key=True)
-    time = Column(DateTime(timezone=True), primary_key=True)
+    time = Column(DateTime(), primary_key=True)
     value = Column(Float)
 
     def __init__(self, value=None, time=None):
@@ -38,10 +39,10 @@ class Value(Base):
 
 class VariableInfo(Base):
     variable_id = Column(Integer, ForeignKey("variable.id"), primary_key=True)
-    time = Column(DateTime(timezone=True), primary_key=True)
+    time = Column(DateTime(), primary_key=True)
     logarithmic = Column(Boolean)
     unit = Column(String(255))
-    description = Column(String(255))
+    description = Column(String(4095))
     time_precision = Column(Float)
     value_precision = Column(Float)
     max_gap = Column(Float)
@@ -51,16 +52,20 @@ class VariableInfo(Base):
 
 class Variable(Base):
     id = Column(Integer, primary_key=True)
-    name = Column(String(255), nullable=False)
-    values = relationship(Value, lazy="dynamic", backref="variable",
-            cascade="all, delete-orphan")
+    name = Column(String(255), nullable=False, unique=True)
+    values = relationship(Value, lazy="dynamic",
+            cascade="all, delete-orphan", passive_deletes=True)
     infos = relationship(VariableInfo, lazy="dynamic",
-            backref="variable", cascade="all, delete-orphan")
+            cascade="all, delete-orphan", backref="variable")
 
-    def __init__(self, name, value=None, time=None):
+    def __init__(self, name, value=None, time=None, info=None):
         self.name = name
         if value is not None:
             self.update(value, time)
+        if info is None:
+            info = VariableInfo()
+            info.time = datetime.datetime.now()
+        self.info = info
 
     def __repr__(self):
         return "<V %s>" % self.name
@@ -88,12 +93,12 @@ class Variable(Base):
         return self.values.order_by(desc(Value.time))
 
     def history(self, begin=None, end=None):
-        v = self.values
+        v = self.last()
         if begin:
             v = v.filter(Value.time >= begin)
         if end:
             v = v.filter(Value.time < end)
-        return v.order_by(asc(Value.time))
+        return v
 
     def iterhistory(self, begin=None, end=None):
         return ((v.time, v.value) for v in
@@ -107,10 +112,8 @@ class Variable(Base):
     def current(self, value):
         self.values.append(value)
 
-    # no association_proxy since we add a new value
     @hybrid_property
     def value(self):
-        # raises AttributeError if unset
         return self.current.value
 
     @value.setter
@@ -132,8 +135,8 @@ class CollectionVariable(Base):
 class TimeRange(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255))
-    begin = Column(DateTime(timezone=True))
-    end = Column(DateTime(timezone=True))
+    begin = Column(DateTime())
+    end = Column(DateTime())
 
 
 class CollectionTimeRange(Base):
@@ -145,9 +148,9 @@ class CollectionTimeRange(Base):
 
 
 class CollectionCollection(Base):
-    parent_id = Column(Integer, ForeignKey("collection.id"),
+    left_id = Column(Integer, ForeignKey("collection.id"),
             primary_key=True)
-    child_id = Column(Integer, ForeignKey("collection.id"),
+    right_id = Column(Integer, ForeignKey("collection.id"),
             primary_key=True)
     position = Column(Integer)
 
@@ -156,52 +159,54 @@ class Collection(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False, unique=True)
     origin = Column(String(255))
-    description = Column(String(255))
-    variables_list = relationship(Variable,
+    description = Column(String(4095))
+    primary_variables = relationship(Variable,
             secondary=CollectionVariable.__table__,
-            lazy="dynamic", order_by=desc(CollectionVariable.position))
-    variables = relationship(Variable,
-            secondary=CollectionVariable.__table__,
-            collection_class=attribute_mapped_collection("name"),
+            order_by=desc(CollectionVariable.position),
+            #collection_class=ordering_list("position"),
             backref=backref("collections", lazy="dynamic"))
-    values = association_proxy("variables", "value",
-            creator=Variable)
-    values_list = association_proxy("variable_list", "value",
-            creator=Variable)
+    right_collections = relationship("Collection",
+            secondary=CollectionCollection.__table__,
+            primaryjoin=id==CollectionCollection.left_id,
+            secondaryjoin=id==CollectionCollection.right_id,
+            order_by=desc(CollectionCollection.position),
+            #collection_class=ordering_list("position"),
+            backref=backref("left_collections", lazy="dynamic"))
     timeranges = relationship(TimeRange,
             secondary=CollectionTimeRange.__table__,
-            lazy="dynamic", order_by=desc(CollectionTimeRange.position))
-    children = relationship("Collection", 
-            secondary=CollectionCollection.__table__,
-            #foreign_keys=CollectionCollection.parent_id,
-            primaryjoin=id==CollectionCollection.parent_id,
-            secondaryjoin=id==CollectionCollection.child_id,
-            backref=backref("parents", lazy="dynamic"),
-            lazy="dynamic", order_by=desc(CollectionCollection.position))
+            order_by=desc(CollectionTimeRange.position),
+            #collection_class=ordering_list("position"),
+            backref=backref("collections", lazy="dynamic"))
 
-    def add(self, variable):
-        self.variables[variable.name] = variable
+    def variables(self):
+        #right_ids = query(Collection.id).filter()
+        #return object_session.query(Variable).filter_by
+        return list(self.primary_variables) + sum((c.variables()
+            for c in self.right_collections), [])
 
-    def get(self, name):
-        try:
-            v = self.variables[name]
-        except KeyError:
+    def get(self, name, create=False, add=False):
+        v = object_session(self).query(Variable).filter(
+                Variable.name == name).first()
+        if not v:
+            if not create:
+                return
             v = Variable(name=name)
-            self.add(v)
+            self.primary_variables.append(v)
+        if not v in self.variables():
+            if not add:
+                return
+            self.primary_variables.append(v)
         return v
 
-    def variables_all(self):
-        return list(self.variables_list) + sum((c.variables_all() for c in
-                self.children), [])
-
     def update_from_recarray(self, data, time_column="time"):
+        # time must be utc localized or utc naive
         time = data.field(time_column).astype("datetime64[us]")
         time = time.astype(float)/1e6
         time = map(datetime.datetime.fromtimestamp, time)
         for name in data.dtype.names:
             if name == time_column:
                 continue
-            v = self.get(name)
+            v = self.get(name, create=True)
             v.update_series(data.field(name), time)
 
     @classmethod
@@ -209,6 +214,3 @@ class Collection(Base):
         obj = cls(**kwargs)
         obj.update_from_recarray(data, time_column=time_column)
         return obj
-
-    def load(self, data):
-        pass
