@@ -22,17 +22,12 @@ class Tablename(object):
 Base = declarative_base(cls=Tablename)
 
 
-class Value(AbstractConcreteBase, Base):
-    __table_args__ = {
-            "mysql_engine": "innodb",
-            "mysql_default_charset": "utf8",
-            "mysql_row_format": "compressed",
-            "mysql_key_block_size": "8",
-            }
+class Value(AbstractConcreteBase):
     @declared_attr
     def variable_id(cls):
         return Column(Integer, ForeignKey("variable.id", ondelete="cascade"),
                 primary_key=True)
+
     #time = Column(DateTime(6), primary_key=True)
     time = Column(BigInteger(), primary_key=True)
 
@@ -41,47 +36,42 @@ class Value(AbstractConcreteBase, Base):
         self.value = value
 
 
-class FloatValue(Value):
+class FloatValue(Value, Base):
     value = Column(Float)
 
 
-class IntegerValue(Value):
+class IntegerValue(Value, Base):
     value = Column(Integer)
 
 
-class BooleanValue(Value):
+class BooleanValue(Value, Base):
     value = Column(Boolean)
 
 
-class TextValue(Value):
+class TextValue(Value, Base):
     value = Column(Text(65535))
 
 
-class BinaryValue(Value):
+class BinaryValue(Value, Base):
     value = Column(Binary(65535))
-
-
-class VariableInfo(Base):
-    variable_id = Column(Integer, ForeignKey("variable.id", ondelete="cascade"),
-            primary_key=True)
-    time = Column(DateTime(), primary_key=True)
-    type = Column(String(255), nullable=False)
-    logarithmic = Column(Boolean)
-    unit = Column(String(255))
-    description = Column(String(4095))
-    time_precision = Column(Float)
-    value_precision = Column(Float)
-    max_gap = Column(Float)
-    aggregate_older = Column(Float)
-    delete_older = Column(Float)
 
 
 class Variable(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False, unique=True)
-    infos = relationship(VariableInfo, lazy="dynamic",
-            cascade="all, delete-orphan", backref="variable",
-            passive_deletes=True)
+    type = Column(String(255), nullable=False)
+    logarithmic = Column(Boolean)
+    unit = Column(String(255))
+    description = Column(String(4095))
+    value_precision = Column(Float)
+    maximum = Column(Float)
+    minimum = Column(Float)
+    log_value_precision = Column(Float)
+    time_precision = Column(BigInteger)
+    time_gap = Column(BigInteger)
+    aggregate_stamp = Column(BigInteger)
+    aggregate_age = Column(BigInteger)
+    delete_age = Column(BigInteger)
 
     float_values = relationship(FloatValue, lazy="dynamic",
             cascade="all, delete-orphan", passive_deletes=True)
@@ -94,19 +84,15 @@ class Variable(Base):
     binary_values = relationship(BinaryValue, lazy="dynamic",
             cascade="all, delete-orphan", passive_deletes=True)
 
-    def __init__(self, name, value=None, time=None, info=None):
+    def __init__(self, name, value=None, time=None, type="float"):
         self.name = name
+        self.type = type
         if value is not None:
             self.update(value, time)
-        if info is None:
-            info = VariableInfo()
-            info.type = "float"
-            info.time = datetime.datetime.now()
-        self.info = info
 
     @property
     def value_table(self):
-        t = self.info.type
+        t = self.type
         if t == "float":
             return FloatValue
         elif t == "int":
@@ -122,7 +108,7 @@ class Variable(Base):
 
     @property
     def values(self):
-        t = self.info.type
+        t = self.type
         if t == "float":
             return self.float_values
         elif t == "int":
@@ -135,14 +121,6 @@ class Variable(Base):
             return self.binary_values
         else:
             raise ValueError(t)
-
-    @hybrid_property
-    def info(self):
-        return self.infos.order_by(desc(VariableInfo.time)).first()
-
-    @info.setter
-    def info(self, info):
-        self.infos.append(info)
 
     def update(self, value=None, time=None):
         if time is None:
@@ -158,21 +136,21 @@ class Variable(Base):
     def last(self):
         return self.values.order_by(desc(self.value_table.time))
 
-    def history(self, begin=None, end=None):
+    def history(self, start=None, stop=None):
         v = self.last()
-        if begin:
-            v = v.filter(self.value_table.time >= begin)
-        if end:
-            v = v.filter(self.value_table.time < end)
+        if start:
+            v = v.filter(Value.time >= start)
+        if stop:
+            v = v.filter(Value.time < stop)
         return v
 
-    def iterhistory(self, begin=None, end=None):
+    def iterhistory(self, start=None, stop=None):
         return ((v.time, v.value) for v in
-                self.history(begin, end))
+                self.history(start, stop))
 
     @hybrid_property
     def current(self):
-        return self.values.order_by(desc(self.value_table.time)).first()
+        return self.last().first()
 
     @current.setter
     def current(self, value):
@@ -200,17 +178,12 @@ class CollectionVariable(Base):
 
 class TimeRange(Base):
     id = Column(Integer, primary_key=True)
+    collection_id = Column(Integer, ForeignKey("collection.id",
+        ondelete="cascade"))
     name = Column(String(255))
-    begin = Column(DateTime())
-    end = Column(DateTime())
-
-
-class CollectionTimeRange(Base):
-    collection_id = Column(Integer, ForeignKey("collection.id", ondelete="cascade"),
-            primary_key=True)
-    timerange_id = Column(Integer, ForeignKey("timerange.id", ondelete="cascade"),
-            primary_key=True)
-    position = Column(Integer)
+    description = Column(String(4095))
+    start = Column(DateTime())
+    stop = Column(DateTime())
 
 
 class CollectionCollection(Base):
@@ -239,10 +212,9 @@ class Collection(Base):
             #collection_class=ordering_list("position"),
             backref=backref("left_collections", lazy="dynamic"))
     timeranges = relationship(TimeRange,
-            secondary=CollectionTimeRange.__table__,
-            order_by=desc(CollectionTimeRange.position),
-            #collection_class=ordering_list("position"),
-            backref=backref("collections", lazy="dynamic"))
+            order_by=asc(TimeRange.start),
+            cascade="all, delete-orphan", passive_deletes=True,
+            backref="collection")
 
     def variables(self):
         return list(self.primary_variables) + sum((c.variables()

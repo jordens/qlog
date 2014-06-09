@@ -59,7 +59,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("-b", "--base",
-            default="http://localhost:6881/api/1")
+            default="http://localhost:6881/1")
     parser.add_argument("-l", "--limit", type=int, default=100)
     parser.add_argument("-i", "--interval", type=float, default=5)
     parser.add_argument("names", nargs="+")

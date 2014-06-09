@@ -1,13 +1,17 @@
 from __future__ import (absolute_import, print_function,
                 unicode_literals, division)
 
-import time
+import time as pytime
 import logging
+import datetime
+
+import numpy as np
 
 from flask import Flask, jsonify, request, current_app
 from flask.ext import restful
+from flask.ext.restful import reqparse
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, asc, desc
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from . import db
@@ -20,64 +24,177 @@ def shutdown_session(exception=None):
     current_app.db_session.remove()
 
 
+
+class List(restful.Resource):
+    def get(self, type):
+        if type == "collections":
+            t = db.Collection
+        elif type == "variables":
+            t = db.Variable
+        else:
+            abort(404, "No such object {}".format(type))
+        return {type: [o.name for o in current_app.db_session.query(t)]}
+
+
+_json_convert = {
+        datetime.datetime: lambda d: d.isoformat(),
+}
+
+def to_json(obj, skip=[]):
+    d = {}
+    cls = obj.__class__
+    for c in cls.__table__.columns:
+        if c.name in skip:
+            continue
+        v = getattr(obj, c.name)
+        if c.type in _json_convert:
+            v = _json_convert[c.type](v)
+        d[c.name] = v
+    return d
+
+
 class Collection(restful.Resource):
-    def get(self, coll=None):
-        cols = current_app.db_session.query(db.Collection)
-        if coll:
-            cols = cols.filter(db.Collection.name == coll)
-        d = {}
-        for c in cols:
-            d[c.name] = {"origin": c.origin,
-                    "description": c.description,
-                    "primary_variables": [v.name for v in
-                        c.primary_variables],
-                    "right_collections": [r.name for r in
-                        c.right_collections]}
-        return jsonify(d)
+    def get(self, coll):
+        c = current_app.db_session.query(db.Collection).filter(
+                db.Collection.name == coll).one()
+        d = to_json(c)
+        d["primary_variables"] = [v.name for v in c.primary_variables]
+        d["right_collections"] = [r.name for r in c.right_collections]
+        return {coll: d}
+
+    def put(self, coll):
+        pass
+        # TODO
+        # create if not exists
+        # set things
+
+    def delete(self, coll):
+        current_app.db_session.query(db.Collection).filter(
+                db.Collection.name == coll).delete()
+        current_app.db_session.commit()
 
 
 class Variable(restful.Resource):
-    def get(self, var=None):
-        vars = current_app.db_session.query(db.Variable)
-        if var:
-            vars = vars.filter(db.Variable.name == var)
-        d = {}
-        for v in vars:
-            i = v.info
-            d[v.name] = {"info": {
-                    "time": i.time,
-                    "logarithmic": i.logarithmic,
-                    "unit": i.unit,
-                    "description": i.description,
-                    "time_precision": i.time_precision,
-                    "value_precision": i.value_precision,
-                    "max_gap": i.max_gap,
-                    "aggregate_older": i.aggregate_older,
-                    "delete_older": i.delete_older,
-                    }}
-            if v.current is not None:
-                d[v.name]["current"] = {
-                        "time": v.current.time,
-                        "value": v.current.value,
-                        }
-        return jsonify(d)
+    parser = reqparse.RequestParser()
+    parser.add_argument("name", type=str)
+    parser.add_argument("type", type=str)
+    parser.add_argument("logarithmic", type=bool)
+    parser.add_argument("description", type=str)
+    parser.add_argument("value_precision", type=float)
+    parser.add_argument("minimum", type=float)
+    parser.add_argument("maximum", type=float)
+    parser.add_argument("log_value_precision", type=float)
+    parser.add_argument("time_precision", type=int)
+    parser.add_argument("time_gar", type=int)
+    parser.add_argument("aggregate_stamp", type=int)
+    parser.add_argument("aggregate_age", type=int)
+    parser.add_argument("delete_age", type=int)
+
+    def get(self, var):
+        v = current_app.db_session.query(db.Variable).filter(
+                db.Variable.name == var).one()
+        d = to_json(v)
+        if v.current is not None:
+            d["current"] = {"time": v.current.time, "value": v.current.value}
+        return {var: d}
+
+    def put(self, var):
+        a = self.parser.parse_args()
+        v = current_app.db_session.query(db.Variable).filter(
+                db.Variable.name == var).first()
+        if not v:
+            v = db.Variable(args["name"])
+            current_app.db_session.add(v)
+        for k, q in a.items():
+            setattr(v, k, q)
+        current_app.db_session.commit()
+        return self.get(var)
+
+    def delete(self, var):
+        current_app.db_session.query(db.Variable).filter(
+                db.Variable.name == var).delete()
+        current_app.db_session.commit()
 
 
 class Data(restful.Resource):
-    def get(self, var, offset=0, limit=1):
+    query = reqparse.RequestParser()
+    query.add_argument("start", type=int)
+    query.add_argument("stop", type=int)
+    query.add_argument("average", type=int)
+    query.add_argument("limit", type=int, default=1000)
+    query.add_argument("offset", type=int, default=0)
+    query.add_argument("statistics", type=bool, default=False)
+
+    update = reqparse.RequestParser()
+    update.add_argument("value", type=float, required=True)
+    update.add_argument("time", type=int)
+
+    def retrieve(self, var, query=False):
+        args = self.query.parse_args()
         v = current_app.db_session.query(db.Variable).filter(
             db.Variable.name == var).one()
-        l = v.last().offset(offset).limit(limit)
-        q = [[q.time, q.value] for q in l]
-        d = {"columns": ["time", "value"],
-                "index": list(range(l.count())),
-                "data": q}
-        return jsonify(d)
+        l = v.values
+        if args["start"]:
+            l = l.filter(v.value_table.time >= args["start"])
+        if args["stop"]:
+            l = l.filter(v.value_table.time < args["stop"])
+        if query:
+            return l
+        l = l.order_by(desc(v.value_table.time))
+        l = l.limit(args["limit"]).offset(args["offset"])
+        t = v.value_table
+        n = l.count()
+        l = l.values(t.time, t.value)
+        return args, l, n
+
+    def get(self, var):
+        args, l, n = self.retrieve(var)
+        l = np.fromiter(l, [(b"time", b"u8"), (b"value", b"f4")], n)
+        if args["average"]:
+            pass
+        if args["statistics"]:
+            return {
+                    "count": n,
+                    "time_min": float(l["time"].min()),
+                    "time_max": float(l["time"].max()),
+                    "time_mean": float(l["time"].mean()),
+                    "time_std": float(l["time"].std()),
+                    "value_min": float(l["value"].min()),
+                    "value_max": float(l["value"].max()),
+                    "value_mean": float(l["value"].mean()),
+                    "value_std": float(l["value"].std()),
+            }
+        else:
+            return {
+                    "columns": ["time", "value"],
+                    "index": list(range(l.shape[0])),
+                    "data": [(float(a), float(b)) for a, b in l],
+            }
 
     def put(self, var):
         v = current_app.db_session.query(db.Variable).filter(
             db.Variable.name == var).one()
-        v.update(value=float(request.form["value"]))
+
+    def post(self, var):
+        args = self.update.parse_args()
+        v = current_app.db_session.query(db.Variable).filter(
+            db.Variable.name == var).one()
+        v.update(value=args["value"], time=args.get("time"))
+        current_app.db_session.commit()
+
+    def delete(self, var):
+        self.retrieve(var, query=True).delete()
+        current_app.db_session.commit()
+
+
+class Update(restful.Resource):
+    def post(self, time=None):
+        if time is None:
+            time = int(pytime.time()*1e6)
+        for k, v in request.values.items():
+            v = float(v)
+            current_app.db_session.query(db.Variable).filter(
+                db.Variable.name == k).one().update(value=v, time=time)
         current_app.db_session.commit()
 
 
@@ -92,15 +209,11 @@ def create_app(database):
     db.Base.metadata.create_all(engine)
     app.db_session = db_session
 
-    api.add_resource(Collection,
-            "/api/1/collection",
-            "/api/1/collection/<string:coll>")
-    api.add_resource(Variable,
-             "/api/1/variable",
-             "/api/1/variable/<string:var>")
-    api.add_resource(Data,
-            "/api/1/data/<string:var>",
-            "/api/1/data/<string:var>/<int:offset>/<int:limit>")
+    api.add_resource(List, "/1/list/<string:type>")
+    api.add_resource(Collection, "/1/collection/<string:coll>")
+    api.add_resource(Variable, "/1/variable/<string:var>")
+    api.add_resource(Data, "/1/data/<string:var>")
+    api.add_resource(Update, "/1/update")
 
     app.teardown_appcontext(shutdown_session)
     return app

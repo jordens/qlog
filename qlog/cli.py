@@ -20,9 +20,9 @@ def main():
     parser.add_argument("-c", "--collection", type=str, default="all")
     parser.add_argument("-v", "--verbose", action="count", default=0)
     parser.add_argument("-q", "--quiet", action="count", default=0)
-    parser.add_argument("-b", "--begin", type=dateutil.parser.parse,
+    parser.add_argument("-b", "--start", type=dateutil.parser.parse,
             default=None)
-    parser.add_argument("-e", "--end", type=dateutil.parser.parse,
+    parser.add_argument("-e", "--stop", type=dateutil.parser.parse,
             default=None)
     parser.add_argument("actions", nargs="+")
     args = parser.parse_args()
@@ -54,11 +54,11 @@ def main():
             n = action.rstrip("?").strip()
             print("time, %s" % n)
             var = collection.get(n)
-            if args.begin:
-                args.begin = time.mktime(args.begin.timetuple())*1e6 + t.microsecond
-            if args.end:
-                args.end = time.mktime(args.end.timetuple())*1e6 + t.microsecond
-            for t, v in var.iterhistory(args.begin, args.end):
+            if args.start:
+                args.start = time.mktime(args.start.timetuple())*1e6 + t.microsecond
+            if args.stop:
+                args.stop = time.mktime(args.stop.timetuple())*1e6 + t.microsecond
+            for t, v in var.iterhistory(args.start, args.stop):
                 print("%s, %g" % (t, v))
         elif "," in action:
             import matplotlib.pyplot as plt
@@ -68,8 +68,7 @@ def main():
                 if not n:
                     continue
                 var = collection.get(n)
-                t, v = np.array(list(var.iterhistory(args.begin,
-                    args.end))).T
+                t, v = np.array(list(var.iterhistory(args.start, args.stop))).T
                 ax.plot(t, v, label=n)
                 if var.info.logarithmic:
                     ax.set_yscale("log")
