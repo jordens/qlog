@@ -7,7 +7,7 @@ import datetime
 
 import numpy as np
 
-from flask import Flask, jsonify, request, current_app
+from flask import Flask, jsonify, request, current_app, abort
 from flask.ext import restful
 from flask.ext.restful import reqparse
 
@@ -56,7 +56,9 @@ def to_json(obj, skip=[]):
 class Collection(restful.Resource):
     def get(self, coll):
         c = current_app.db_session.query(db.Collection).filter(
-                db.Collection.name == coll).one()
+                db.Collection.name == coll).first()
+        if not c:
+            abort(404, "Not found: {}".format(coll))
         d = to_json(c)
         d["primary_variables"] = [v.name for v in c.primary_variables]
         d["right_collections"] = [r.name for r in c.right_collections]
@@ -78,6 +80,7 @@ class Variable(restful.Resource):
     parser = reqparse.RequestParser()
     parser.add_argument("name", type=str)
     parser.add_argument("type", type=str)
+    parser.add_argument("unit", type=str)
     parser.add_argument("logarithmic", type=bool)
     parser.add_argument("description", type=str)
     parser.add_argument("value_precision", type=float)
@@ -92,27 +95,46 @@ class Variable(restful.Resource):
 
     def get(self, var):
         v = current_app.db_session.query(db.Variable).filter(
-                db.Variable.name == var).one()
+                db.Variable.name == var).first()
+        if not v:
+            abort(404, "Not found: {}".format(var))
         d = to_json(v)
         if v.current is not None:
             d["current"] = {"time": v.current.time, "value": v.current.value}
         return {var: d}
 
+    def update(self, v, a):
+        for k, q in a.items():
+            if q is not None:
+                setattr(v, k, q)
+        current_app.db_session.commit()
+
     def put(self, var):
-        a = self.parser.parse_args()
+        args = self.parser.parse_args()
         v = current_app.db_session.query(db.Variable).filter(
                 db.Variable.name == var).first()
         if not v:
-            v = db.Variable(args["name"])
-            current_app.db_session.add(v)
-        for k, q in a.items():
-            setattr(v, k, q)
-        current_app.db_session.commit()
+            abort(404, "Not found: {}".format(var))
+        self.update(v, args)
+        return self.get(var)
+
+    def post(self, var):
+        args = self.parser.parse_args()
+        if args["name"] is None:
+            abort(404, "Need name for creation")
+        if args["type"] is None:
+            abort(404, "Need type for creation")
+        v = db.Variable(args["name"])
+        current_app.db_session.add(v)
+        self.update(v, args)
         return self.get(var)
 
     def delete(self, var):
-        current_app.db_session.query(db.Variable).filter(
-                db.Variable.name == var).delete()
+        v = current_app.db_session.query(db.Variable).filter(
+                db.Variable.name == var).first()
+        if not v:
+            abort(404, "Not found: {}".format(var))
+        current_app.db_session.delete(v)
         current_app.db_session.commit()
 
 
@@ -132,7 +154,9 @@ class Data(restful.Resource):
     def retrieve(self, var, query=False):
         args = self.query.parse_args()
         v = current_app.db_session.query(db.Variable).filter(
-            db.Variable.name == var).one()
+            db.Variable.name == var).first()
+        if not v:
+            abort(404, "Not found: {}".format(var))
         l = v.values
         if args["start"]:
             l = l.filter(v.value_table.time >= args["start"])
@@ -165,11 +189,7 @@ class Data(restful.Resource):
                     "value_std": float(l["value"].std()),
             }
         else:
-            return {
-                    "columns": ["time", "value"],
-                    "index": list(range(l.shape[0])),
-                    "data": [(float(a), float(b)) for a, b in l],
-            }
+            return {var: dict((int(a), float(b)) for a, b in l)}
 
     def put(self, var):
         v = current_app.db_session.query(db.Variable).filter(
@@ -178,7 +198,9 @@ class Data(restful.Resource):
     def post(self, var):
         args = self.update.parse_args()
         v = current_app.db_session.query(db.Variable).filter(
-            db.Variable.name == var).one()
+            db.Variable.name == var).first()
+        if not v:
+            abort(404, "Not found: {}".format(var))
         v.update(value=args["value"], time=args.get("time"))
         current_app.db_session.commit()
 
@@ -193,8 +215,11 @@ class Update(restful.Resource):
             time = int(pytime.time()*1e6)
         for k, v in request.values.items():
             v = float(v)
-            current_app.db_session.query(db.Variable).filter(
-                db.Variable.name == k).one().update(value=v, time=time)
+            q = current_app.db_session.query(db.Variable).filter(
+                db.Variable.name == k).first()
+            if not q:
+                abort(404, "Not found: {}".format(k))
+            q.update(value=v, time=time)
         current_app.db_session.commit()
 
 
