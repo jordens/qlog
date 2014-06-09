@@ -13,15 +13,15 @@ class QlogPlot:
     def __init__(self, base, name, limit, ds):
         self.name = name
         self.var = requests.get("%s/variable/%s" % (base, name)).json()[name]
-        self.url = "%s/data/%s/0/%i" % (base, name, limit)
+        self.url = "%s/data/%s?limit=%i" % (base, name, limit)
         ds.add([], "%s value" % name)
         ds.add([], "%s time" % name)
         self.update(ds)
         self.plot(ds)
 
     def plot(self, ds):
-        unit = self.var["info"].get("unit", "")
-        if self.var["info"].get("logarithmic"):
+        unit = self.var["unit"]
+        if self.var["logarithmic"]:
             unit = unit + " (log10)"
         plotting.line("%s time" % self.name, "%s value" % self.name,
                 x_axis_type="datetime", source=ds,
@@ -31,12 +31,12 @@ class QlogPlot:
                 legend="%s (%s)" % (self.name, unit), title="")
 
     def update(self, ds):
-        df = pd.read_json(self.url, "split")
-        y = df.value
-        if self.var["info"]["logarithmic"]:
-            y = np.log10(df.value)
+        df = pd.read_json(self.url)
+        y = np.array(df)
+        if self.var["logarithmic"]:
+            y = np.log10(y)
         ds.data["%s value" % self.name] = y
-        ds.data["%s time" % self.name] = df.time
+        ds.data["%s time" % self.name] = df.index
 
 
 def simple_line_plot(base, names, limit, interval):
