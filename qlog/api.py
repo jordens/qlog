@@ -173,7 +173,7 @@ class Data(restful.Resource):
 
     def get(self, var):
         args, l, n = self.retrieve(var)
-        l = np.fromiter(l, [(b"time", b"u8"), (b"value", b"f4")], n)
+        l = np.fromiter(l, [(str("time"), np.uint64), (str("value"), np.float32)], n)
         if args["average"]:
             pass
         if args["statistics"]:
@@ -201,7 +201,7 @@ class Data(restful.Resource):
             db.Variable.name == var).first()
         if not v:
             abort(404, "Not found: {}".format(var))
-        v.update(value=args["value"], time=args.get("time"))
+        v.update(value=args["value"], time=args["time"])
         current_app.db_session.commit()
 
     def delete(self, var):
